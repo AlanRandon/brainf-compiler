@@ -1,7 +1,7 @@
 .PHONY: clean
 
 main: out.o zig-out/bin/brainf.o
-	ld out.o zig-out/bin/brainf.o -lc -o main
+	ld out.o zig-out/bin/brainf.o -o main
 
 out.bc:
 	zig build run
