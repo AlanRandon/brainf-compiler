@@ -1,6 +1,6 @@
 zig-out
 .zig-cache
 main
-out.bc
-out.ll
-out.o
+**/out.bc
+**/out.ll
+**/out.o
