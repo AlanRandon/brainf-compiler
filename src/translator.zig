@@ -48,8 +48,11 @@ pub const Translator = struct {
     entry_function: c.LLVMValueRef,
     input_function: c.LLVMValueRef,
     output_function: c.LLVMValueRef,
-    cell_ptr: c.LLVMValueRef,
+    cell_ptr_ptr: c.LLVMValueRef,
     types: Types,
+
+    current_cell_ptr: ?c.LLVMValueRef = null,
+    current_data: ?c.LLVMValueRef = null,
 
     pub fn init() !Translator {
         const module = c.LLVMModuleCreateWithName("brainf-module");
@@ -80,8 +83,8 @@ pub const Translator = struct {
             0,
         );
 
-        const cell_ptr = c.LLVMBuildAlloca(builder, types.ptr, "cell_ptr");
-        _ = c.LLVMBuildStore(builder, cell_start_ptr, cell_ptr);
+        const cell_ptr_ptr = c.LLVMBuildAlloca(builder, types.ptr, "cell_ptr_ptr");
+        _ = c.LLVMBuildStore(builder, cell_start_ptr, cell_ptr_ptr);
 
         return .{
             .module = module,
@@ -89,7 +92,7 @@ pub const Translator = struct {
             .entry_function = entry_func,
             .input_function = input_func,
             .output_function = output_func,
-            .cell_ptr = cell_ptr,
+            .cell_ptr_ptr = cell_ptr_ptr,
             .types = types,
         };
     }
@@ -99,31 +102,49 @@ pub const Translator = struct {
         c.LLVMDisposeModule(translator.module);
     }
 
+    pub fn getCellPtr(translator: *Translator) c.LLVMValueRef {
+        if (translator.current_cell_ptr) |ptr| {
+            return ptr;
+        }
+
+        const ptr = c.LLVMBuildLoad2(translator.builder, translator.types.ptr, translator.cell_ptr_ptr, "cell_ptr");
+        translator.current_cell_ptr = ptr;
+        return ptr;
+    }
+
+    pub fn getCellData(translator: *Translator) c.LLVMValueRef {
+        if (translator.current_data) |data| {
+            return data;
+        }
+
+        const data = c.LLVMBuildLoad2(translator.builder, translator.types.byte, translator.getCellPtr(), "data");
+        translator.current_data = data;
+        return data;
+    }
+
     fn translateOperation(translator: *Translator, operation: Operation) void {
         switch (operation) {
             .add_data => |value| {
-                const current_cell_ptr = c.LLVMBuildLoad2(translator.builder, translator.types.ptr, translator.cell_ptr, "current_cell_ptr");
-                const initial = c.LLVMBuildLoad2(translator.builder, translator.types.byte, current_cell_ptr, "old_data");
-                const result = c.LLVMBuildAdd(translator.builder, initial, c.LLVMConstInt(translator.types.byte, @bitCast(value), 0), "new_data");
-                _ = c.LLVMBuildStore(translator.builder, result, current_cell_ptr);
+                const add_result = c.LLVMBuildAdd(translator.builder, translator.getCellData(), c.LLVMConstInt(translator.types.byte, @bitCast(value), 0), "new_data");
+                _ = c.LLVMBuildStore(translator.builder, add_result, translator.getCellPtr());
+                translator.current_data = add_result;
             },
             .add_ptr => |value| {
-                const current_cell_ptr = c.LLVMBuildLoad2(translator.builder, translator.types.ptr, translator.cell_ptr, "current_cell_ptr");
                 const offsets = [_]c.LLVMValueRef{c.LLVMConstInt(translator.types.int32, @bitCast(value), 0)};
-                const new_cell_ptr = c.LLVMBuildGEP2(translator.builder, translator.types.ptr, current_cell_ptr, @constCast(&offsets), offsets.len, "new_cell_ptr");
-                _ = c.LLVMBuildStore(translator.builder, new_cell_ptr, translator.cell_ptr);
+                const new_cell_ptr = c.LLVMBuildGEP2(translator.builder, translator.types.ptr, translator.getCellPtr(), @constCast(&offsets), offsets.len, "new_cell_ptr");
+                _ = c.LLVMBuildStore(translator.builder, new_cell_ptr, translator.cell_ptr_ptr);
+                translator.current_cell_ptr = null;
+                translator.current_data = null;
             },
             .output => {
-                const current_cell_ptr = c.LLVMBuildLoad2(translator.builder, translator.types.ptr, translator.cell_ptr, "current_cell_ptr");
-                const value = c.LLVMBuildLoad2(translator.builder, translator.types.byte, current_cell_ptr, "data");
-                const args = [_]c.LLVMValueRef{ c.LLVMGetParam(translator.entry_function, 0), value };
+                const args = [_]c.LLVMValueRef{ c.LLVMGetParam(translator.entry_function, 0), translator.getCellData() };
                 _ = c.LLVMBuildCall2(translator.builder, translator.types.output_signature, translator.output_function, @constCast(&args), args.len, "");
             },
             .input => {
-                const current_cell_ptr = c.LLVMBuildLoad2(translator.builder, translator.types.ptr, translator.cell_ptr, "current_cell_ptr");
                 const args = [_]c.LLVMValueRef{c.LLVMGetParam(translator.entry_function, 0)};
                 const data = c.LLVMBuildCall2(translator.builder, translator.types.input_signature, translator.input_function, @constCast(&args), args.len, "data");
-                _ = c.LLVMBuildStore(translator.builder, data, current_cell_ptr);
+                _ = c.LLVMBuildStore(translator.builder, data, translator.getCellPtr());
+                translator.current_data = data;
             },
             .while_nonzero => |loop_body| {
                 const loop_cond = c.LLVMAppendBasicBlock(translator.entry_function, "nonzero_loop_cond");
@@ -131,16 +152,21 @@ pub const Translator = struct {
                 const loop_end = c.LLVMAppendBasicBlock(translator.entry_function, "nonzero_loop_end");
 
                 _ = c.LLVMBuildBr(translator.builder, loop_cond);
-
                 c.LLVMPositionBuilderAtEnd(translator.builder, loop_cond);
-                const current_cell_ptr = c.LLVMBuildLoad2(translator.builder, translator.types.ptr, translator.cell_ptr, "current_cell_ptr");
-                const value = c.LLVMBuildLoad2(translator.builder, translator.types.byte, current_cell_ptr, "data");
-                const data_is_zero = c.LLVMBuildICmp(translator.builder, c.LLVMIntEQ, value, c.LLVMConstInt(translator.types.byte, 0, 0), "data_is_zero");
+
+                // the current cell ptr or data may change in the loop body
+                translator.current_cell_ptr = null;
+                translator.current_data = null;
+
+                const data_is_zero = c.LLVMBuildICmp(translator.builder, c.LLVMIntEQ, translator.getCellData(), c.LLVMConstInt(translator.types.byte, 0, 0), "data_is_zero");
                 _ = c.LLVMBuildCondBr(translator.builder, data_is_zero, loop_end, loop);
 
                 c.LLVMPositionBuilderAtEnd(translator.builder, loop);
                 translator.translateMany(loop_body.items);
                 _ = c.LLVMBuildBr(translator.builder, loop_cond);
+
+                translator.current_cell_ptr = null;
+                translator.current_data = null;
 
                 c.LLVMPositionBuilderAtEnd(translator.builder, loop_end);
             },

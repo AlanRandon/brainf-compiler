@@ -1,6 +1,6 @@
 .PHONY: clean
 
-EXAMPLE=hello
+EXAMPLE=rot13
 
 BFC=../zig-out/bin/bfc
 BF_RUNTIME=../zig-out/bin/brainf.o
