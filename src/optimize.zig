@@ -17,6 +17,16 @@ pub fn collapseConsecutiveAddPass(operations: *std.ArrayList(Operation), allocat
                 },
                 else => {},
             },
+            .add_ptr => |value| if (result.items.len > 0) switch (result.items[result.items.len - 1]) {
+                .add_ptr => |*old_value| {
+                    old_value.* += value;
+                    if (old_value.* == 0) {
+                        _ = result.pop();
+                    }
+                    continue;
+                },
+                else => {},
+            },
             .while_nonzero => |inner| {
                 var inner_ops = inner;
                 try collapseConsecutiveAddPass(&inner_ops, allocator);

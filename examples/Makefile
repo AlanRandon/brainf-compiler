@@ -11,11 +11,11 @@ main: out.o
 out.o: ${INPUT}
 	${BFC} ${EXAMPLE}.bf
 
-out.bc: src/main.bf
+out.bc: ${EXAMPLE}.bf
 	${BFC} ${EXAMPLE}.bf -f bitcode
 
-out.ll: src/main.bf
-	${BFC} ${EXAMPLE}.bf -f ir_text -O O0
+out.ll: ${EXAMPLE}.bf
+	${BFC} ${EXAMPLE}.bf -f ir_text -O0
 
 clean:
 	$(RM) main out.o out.bc out.ll
