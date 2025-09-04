@@ -12,7 +12,7 @@
 
     zls-overlay = {
       # visit https://zigtools.org/zls/install/ to find a compatible version
-      url = "github:zigtools/zls/master";
+      url = "github:zigtools/zls/0.15.0";
       inputs = {
         nixpkgs.follows = "nixpkgs";
         zig-overlay.follows = "zig-overlay";
@@ -32,7 +32,7 @@
       perSystem =
         { pkgs, system, ... }:
         let
-          zig = zig-overlay.packages.${system}.master;
+          zig = zig-overlay.packages.${system}."0.15.1";
           zls = zls-overlay.packages.${system}.zls.overrideAttrs (old: {
             nativeBuildInputs = [ zig ];
           });
@@ -43,6 +43,7 @@
 
             buildInputs = [
               pkgs.llvmPackages.libllvm.dev
+              pkgs.lld
             ];
 
             packages = [

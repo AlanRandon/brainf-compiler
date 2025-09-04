@@ -1,6 +1,6 @@
 const std = @import("std");
 const clap = @import("clap");
-const c = @import("c.zig");
+const c = @import("c.zig").c;
 const tokenizer = @import("tokenizer.zig");
 const parser = @import("parser.zig");
 const translator = @import("translator.zig");
@@ -27,7 +27,7 @@ const args_definition =
     \\
 ;
 
-fn printUsage(stream: anytype, params: anytype) !void {
+fn printUsage(stream: *std.Io.Writer, params: anytype) !void {
     try stream.writeAll("USAGE: ");
     try clap.usage(stream, clap.Help, params);
     try stream.writeAll("\n");
@@ -90,6 +90,9 @@ pub fn main() !void {
 
     const params = comptime clap.parseParamsComptime(args_definition);
 
+    var stderr_buffer: [128]u8 = undefined;
+    var stderr = std.fs.File.stderr().writer(&stderr_buffer).interface;
+
     var diag = clap.Diagnostic{};
     var args = clap.parse(clap.Help, &params, .{
         .FILE = clap.parsers.string,
@@ -102,36 +105,36 @@ pub fn main() !void {
         .diagnostic = &diag,
         .allocator = allocator,
     }) catch |err| {
-        const stderr = std.io.getStdErr().writer();
-        try printUsage(stderr, &params);
-        try diag.report(stderr, err);
+        try printUsage(&stderr, &params);
+        try diag.report(&stderr, err);
+        try stderr.flush();
         return err;
     };
     defer args.deinit();
 
     if (args.args.help != 0) {
-        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return clap.help(&stderr, clap.Help, &params, .{});
     }
 
     const source_path = args.positionals[0] orelse return error.MissingInputFile;
     const output_format = if (args.args.format) |format| format else .object;
 
     const source_buf = if (std.mem.eql(u8, source_path, "-"))
-        try std.io.getStdIn().readToEndAlloc(allocator, max_source_size)
+        try std.fs.File.stdin().readToEndAlloc(allocator, max_source_size)
     else
         try std.fs.cwd().readFileAlloc(allocator, source_path, max_source_size);
     defer allocator.free(source_buf);
 
     var tok = tokenizer.Tokenizer.init(source_buf);
     var p = try parser.Parser.parse(&tok, allocator);
-    defer p.deinit();
+    defer p.deinit(allocator);
 
     try optimize.collapseConsecutiveAddPass(&p.operations, allocator);
 
     var trns = try translator.Translator.init();
     defer trns.deinit();
 
-    trns.translateProgram(p.operations.items);
+    trns.translateProgram(p.operations);
 
     c.LLVMInitializeAllTargetInfos();
     c.LLVMInitializeAllTargets();
@@ -183,9 +186,9 @@ pub fn main() !void {
     const options = c.LLVMCreatePassBuilderOptions();
     defer c.LLVMDisposePassBuilderOptions(options);
 
-    const passes = try std.fmt.allocPrintZ(allocator, "default<O{s}>", .{
+    const passes = try std.fmt.allocPrintSentinel(allocator, "default<O{s}>", .{
         if (args.args.optimize) |opt| opt else "3",
-    });
+    }, 0);
     defer allocator.free(passes);
 
     if (c.LLVMRunPasses(trns.module, passes, target_machine, options)) |opt_err| {

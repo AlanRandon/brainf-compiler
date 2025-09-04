@@ -4,9 +4,10 @@ EXAMPLE=rot13
 
 BFC=../zig-out/bin/bfc
 BF_RUNTIME=../zig-out/bin/brainf.o
+LD=ld.lld
 
 main: out.o
-	ld out.o ${BF_RUNTIME} -o main
+	${LD} out.o ${BF_RUNTIME} -o main
 
 out.o: ${INPUT}
 	${BFC} ${EXAMPLE}.bf

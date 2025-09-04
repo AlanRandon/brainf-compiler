@@ -40,8 +40,8 @@ comptime {
 
 pub fn main() !void {
     var context: Context = .{
-        .stdin = std.io.getStdIn(),
-        .stdout = std.io.getStdIn(),
+        .stdin = std.fs.File.stdin(),
+        .stdout = std.fs.File.stdout(),
     };
 
     if (std.posix.isatty(context.stdin.handle)) {

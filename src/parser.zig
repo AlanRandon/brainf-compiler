@@ -8,42 +8,47 @@ pub const Operation = union(enum) {
     output,
     input,
     /// operations contained between '[' and ']'
-    while_nonzero: std.ArrayList(Operation),
+    while_nonzero: []Operation,
 
-    fn deinit(operation: *Operation) void {
+    fn deinit(operation: *Operation, allocator: std.mem.Allocator) void {
         switch (operation.*) {
-            .while_nonzero => |*operations| deinitList(operations),
+            .while_nonzero => |operations| {
+                deinitList(operations, allocator);
+                allocator.free(operations);
+            },
             else => {},
         }
     }
 
-    fn deinitList(operations: *std.ArrayList(Operation)) void {
-        for (operations.items) |*op| {
-            op.deinit();
+    fn deinitList(operations: []Operation, allocator: std.mem.Allocator) void {
+        for (operations) |*op| {
+            op.deinit(allocator);
         }
-        operations.deinit();
     }
 };
 
 pub const Parser = struct {
-    operations: std.ArrayList(Operation),
+    operations: []Operation,
 
-    fn parseJumpIfZero(tokens: anytype, allocator: std.mem.Allocator) !std.ArrayList(Operation) {
-        var operations = std.ArrayList(Operation).init(allocator);
-        errdefer Operation.deinitList(&operations);
+    fn parseJumpIfZero(tokens: anytype, allocator: std.mem.Allocator) ![]Operation {
+        var operations: std.ArrayList(Operation) = try .initCapacity(allocator, 0);
+        errdefer {
+            Operation.deinitList(operations.items, allocator);
+            operations.deinit(allocator);
+        }
 
         while (tokens.next()) |token| {
             switch (@as(Token, token)) {
-                .increment_ptr => try operations.append(.{ .add_ptr = 1 }),
-                .decrement_ptr => try operations.append(.{ .add_ptr = -1 }),
-                .increment_data => try operations.append(.{ .add_data = 1 }),
-                .decrement_data => try operations.append(.{ .add_data = -1 }),
-                .output => try operations.append(.output),
-                .input => try operations.append(.input),
-                .jump_if_zero => try operations.append(.{
+                .increment_ptr => try operations.append(allocator, .{ .add_ptr = 1 }),
+                .decrement_ptr => try operations.append(allocator, .{ .add_ptr = -1 }),
+                .increment_data => try operations.append(allocator, .{ .add_data = 1 }),
+                .decrement_data => try operations.append(allocator, .{ .add_data = -1 }),
+                .output => try operations.append(allocator, .output),
+                .input => try operations.append(allocator, .input),
+                .jump_if_zero => try operations.append(allocator, .{
                     .while_nonzero = try parseJumpIfZero(tokens, allocator),
                 }),
-                .jump_if_nonzero => return operations,
+                .jump_if_nonzero => return operations.toOwnedSlice(allocator),
             }
         }
 
@@ -51,49 +56,49 @@ pub const Parser = struct {
     }
 
     pub fn parse(tokens: anytype, allocator: std.mem.Allocator) !Parser {
-        var operations = std.ArrayList(Operation).init(allocator);
-        errdefer Operation.deinitList(&operations);
+        var operations: std.ArrayList(Operation) = try .initCapacity(allocator, 0);
+        errdefer {
+            Operation.deinitList(operations.items, allocator);
+            operations.deinit(allocator);
+        }
 
         while (tokens.next()) |token| {
             switch (@as(Token, token)) {
-                .increment_ptr => try operations.append(.{ .add_ptr = 1 }),
-                .decrement_ptr => try operations.append(.{ .add_ptr = -1 }),
-                .increment_data => try operations.append(.{ .add_data = 1 }),
-                .decrement_data => try operations.append(.{ .add_data = -1 }),
-                .output => try operations.append(.output),
-                .input => try operations.append(.input),
-                .jump_if_zero => try operations.append(.{
+                .increment_ptr => try operations.append(allocator, .{ .add_ptr = 1 }),
+                .decrement_ptr => try operations.append(allocator, .{ .add_ptr = -1 }),
+                .increment_data => try operations.append(allocator, .{ .add_data = 1 }),
+                .decrement_data => try operations.append(allocator, .{ .add_data = -1 }),
+                .output => try operations.append(allocator, .output),
+                .input => try operations.append(allocator, .input),
+                .jump_if_zero => try operations.append(allocator, .{
                     .while_nonzero = try parseJumpIfZero(tokens, allocator),
                 }),
                 .jump_if_nonzero => return error.UnexpectedNonzeroJump,
             }
         }
 
-        return .{ .operations = operations };
+        return .{ .operations = try operations.toOwnedSlice(allocator) };
     }
 
-    pub fn deinit(parser: *Parser) void {
-        Operation.deinitList(&parser.operations);
+    pub fn deinit(parser: *Parser, allocator: std.mem.Allocator) void {
+        Operation.deinitList(parser.operations, allocator);
+        allocator.free(parser.operations);
     }
 };
 
 test Parser {
     var tok = tokenizer.Tokenizer.init("++-><[.],");
     var parser = try Parser.parse(&tok, std.testing.allocator);
-    defer parser.deinit();
+    defer parser.deinit(std.testing.allocator);
 
-    var inner = std.ArrayList(Operation).init(std.testing.allocator);
-    defer inner.deinit();
-
-    try inner.appendSlice(&.{.output});
-
+    var inner = [_]Operation{.output};
     try std.testing.expectEqualDeep(&[_]Operation{
         .{ .add_data = 1 },
         .{ .add_data = 1 },
         .{ .add_data = -1 },
         .{ .add_ptr = 1 },
         .{ .add_ptr = -1 },
-        .{ .while_nonzero = inner },
+        .{ .while_nonzero = &inner },
         .input,
-    }, parser.operations.items);
+    }, parser.operations);
 }

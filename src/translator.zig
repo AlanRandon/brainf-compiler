@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig");
+const c = @import("c.zig").c;
 const Operation = @import("parser.zig").Operation;
 
 const cell_count = 30_000;
@@ -162,7 +162,7 @@ pub const Translator = struct {
                 _ = c.LLVMBuildCondBr(translator.builder, data_is_zero, loop_end, loop);
 
                 c.LLVMPositionBuilderAtEnd(translator.builder, loop);
-                translator.translateMany(loop_body.items);
+                translator.translateMany(loop_body);
                 _ = c.LLVMBuildBr(translator.builder, loop_cond);
 
                 translator.current_cell_ptr = null;
